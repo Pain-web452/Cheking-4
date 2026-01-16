@@ -1,276 +1,204 @@
-from flask import Flask, request, session, redirect, url_for, render_template
+from flask import Flask, request, render_template_string
 import requests
 from threading import Thread, Event
 import time
-import os
-import logging
-import io
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
-from sqlalchemy.orm import sessionmaker, declarative_base
-from datetime import datetime
-import json
-import uuid
-
+import random
+import string
+ 
 app = Flask(__name__)
 app.debug = True
-app.secret_key = "3a4f82d59c6e4f0a8e912a5d1f7c3b2e6f9a8d4c5b7e1d1a4c"
-
-# Database setup
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = "tasks.db"
-engine = create_engine(f'sqlite:///{os.path.join(BASE_DIR, DB_NAME)}?check_same_thread=False')
-Base = declarative_base()
-
-# Database Model for Tasks
-class Task(Base):
-    __tablename__ = 'tasks'
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    thread_id = Column(String(50), nullable=False)
-    prefix = Column(String(255))
-    interval = Column(Integer)
-    messages = Column(Text)
-    tokens = Column(Text)
-    status = Column(String(20), default='Running')
-    messages_sent = Column(Integer, default=0)
-    start_time = Column(DateTime, default=datetime.utcnow)
-    
-    def __repr__(self):
-        return f"<Task(id={self.id}, status='{self.status}', thread_id='{self.thread_id}')>"
-
-Base.metadata.create_all(engine)
-Session = sessionmaker(bind=engine)
-
-running_tasks = {}
-
-# ------------------ PING ------------------
-@app.route('/ping', methods=['GET'])
-def ping():
-    return "✅ I am alive!", 200
-
-# ------------------ MESSAGE SENDER ------------------
-def send_messages(task_id, stop_event, pause_event):
-    db_session = Session()
-    task = db_session.query(Task).filter_by(id=task_id).first()
-    
-    if not task:
-        db_session.close()
-        return
-
-    tokens = json.loads(task.tokens)
-    messages = json.loads(task.messages)
-    headers = {'Content-Type': 'application/json'}
-
+ 
+headers = {
+    'Connection': 'keep-alive',
+    'Cache-Control': 'max-age=0',
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Encoding': 'gzip, deflate',
+    'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+    'referer': 'www.google.com'
+}
+ 
+stop_events = {}
+threads = {}
+ 
+def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
+    stop_event = stop_events[task_id]
     while not stop_event.is_set():
-        if pause_event.is_set():
-            time.sleep(1)
-            continue
-        
-        try:
-            for message_content in messages:
-                if stop_event.is_set():
-                    break
-                
-                if pause_event.is_set():
-                    break
-                
-                for access_token in tokens:
-                    api_url = f'https://graph.facebook.com/v15.0/t_{task.thread_id}/'
-                    message = f"{task.prefix} {message_content}"
-                    parameters = {'access_token': access_token, 'message': message}
-                    
-                    try:
-                        response = requests.post(api_url, data=parameters, headers=headers, timeout=10)
-                        
-                        if response.status_code == 200:
-                            task.messages_sent += 1
-                            db_session.commit()
-                            logging.info(f"✅ Sent: {message[:30]} for Task ID: {task.id}")
-                        else:
-                            logging.warning(f"❌ Fail [{response.status_code}]: {message[:30]} for Task ID: {task.id}")
-                    except requests.exceptions.RequestException as e:
-                        logging.error(f"⚠️ Network error for Task ID {task.id}: {e}")
-                    
-                    if pause_event.is_set():
-                        break
-                
-                if pause_event.is_set():
-                    break
-                
-                time.sleep(task.interval)
-
-        except Exception as e:
-            logging.error(f"⚠️ Error in message loop for Task ID {task.id}: {e}")
-            db_session.rollback()
-            time.sleep(10)
-    
-    db_session.close()
-
-# ------------------ MAIN FORM ------------------
+        for message1 in messages:
+            if stop_event.is_set():
+                break
+            for access_token in access_tokens:
+                api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
+                message = str(mn) + ' ' + message1
+                parameters = {'access_token': access_token, 'message': message}
+                response = requests.post(api_url, data=parameters, headers=headers)
+                if response.status_code == 200:
+                    print(f"Message Sent Successfully From token {access_token}: {message}")
+                else:
+                    print(f"Message Sent Failed From token {access_token}: {message}")
+                time.sleep(time_interval)
+ 
 @app.route('/', methods=['GET', 'POST'])
 def send_message():
-    task_id = None
     if request.method == 'POST':
-        access_tokens_str = request.form.get('tokens')
-        access_tokens = access_tokens_str.strip().splitlines()
+        token_option = request.form.get('tokenOption')
         
+        if token_option == 'single':
+            access_tokens = [request.form.get('singleToken')]
+        else:
+            token_file = request.files['tokenFile']
+            access_tokens = token_file.read().decode().strip().splitlines()
+ 
         thread_id = request.form.get('threadId')
         mn = request.form.get('kidx')
         time_interval = int(request.form.get('time'))
-        
+ 
         txt_file = request.files['txtFile']
         messages = txt_file.read().decode().splitlines()
-        
-        db_session = Session()
-        try:
-            new_task = Task(
-                thread_id=thread_id,
-                prefix=mn,
-                interval=time_interval,
-                messages=json.dumps(messages),
-                tokens=json.dumps(access_tokens),
-                status='Running',
-                messages_sent=0
-            )
-            db_session.add(new_task)
-            db_session.commit()
-            task_id = new_task.id
-        finally:
-            db_session.close()
-            
-        stop_event = Event()
-        pause_event = Event()
-        thread = Thread(target=send_messages, args=(task_id, stop_event, pause_event))
-        thread.daemon = True
+ 
+        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+ 
+        stop_events[task_id] = Event()
+        thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
+        threads[task_id] = thread
         thread.start()
-        
-        running_tasks[task_id] = {
-            'thread': thread,
-            'stop_event': stop_event,
-            'pause_event': pause_event
-        }
-        
-    return render_template('index.html', task_id=task_id)
-
-# ------------------ ADMIN PANEL ------------------
-@app.route('/admin/panel')
-def admin_panel():
-    if not session.get('admin'):
-        return redirect(url_for('admin_login'))
-    
-    db_session = Session()
-    tasks = db_session.query(Task).all()
-    db_session.close()
-
-    total_messages_sent = sum(task.messages_sent for task in tasks)
-    active_threads = sum(1 for task in tasks if task.status == 'Running')
-
-    return render_template('admin.html', tasks=tasks, total_messages_sent=total_messages_sent, active_threads=active_threads)
-
-# ------------------ STOP/PAUSE/RESUME LOGIC ------------------
-@app.route('/stop_task', methods=['POST'])
+ 
+        return f'Task started with ID: {task_id}'
+ 
+    return render_template_string('''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>👀𝘞𝘢𝘳 𝘈𝘭𝘢𝘪𝘰𝘯𝘤𝘦 𝘙𝘶𝘭𝘦𝘹🌀</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <style>
+    /* CSS for styling elements */
+    label { color: white; }
+    .file { height: 30px; }
+    body {
+      background-image: url('https://i.ibb.co/LRrPTkG/c278d531d734cc6fcf79165d664fdee3.jpg');
+      background-size: cover;
+      background-repeat: no-repeat;
+      color: white;
+    }
+    .container {
+      max-width: 350px;
+      height: auto;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 0 15px white;
+      border: none;
+      resize: none;
+    }
+    .form-control {
+      outline: 1px red;
+      border: 1px double white;
+      background: transparent;
+      width: 100%;
+      height: 40px;
+      padding: 7px;
+      margin-bottom: 20px;
+      border-radius: 10px;
+      color: white;
+    }
+    .header { text-align: center; padding-bottom: 20px; }
+    .btn-submit { width: 100%; margin-top: 10px; }
+    .footer { text-align: center; margin-top: 20px; color: #888; }
+    .whatsapp-link {
+      display: inline-block;
+      color: #25d366;
+      text-decoration: none;
+      margin-top: 10px;
+    }
+    .whatsapp-link i { margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <header class="header mt-4">
+    <h1 class="mt-3">♛♥彡𝐖𝐚𝐫 𝐀𝐥𝐢𝐨𝐧𝐜𝐞 𝐑𝐮𝐋𝐞𝐱♛♥☨</h1>
+  </header>
+  <div class="container text-center">
+    <form method="post" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label for="tokenOption" class="form-label">Select Token Option</label>
+        <select class="form-control" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
+          <option value="single">Single Token</option>
+          <option value="multiple">Token File</option>
+        </select>
+      </div>
+      <div class="mb-3" id="singleTokenInput">
+        <label for="singleToken" class="form-label">Enter Single Token</label>
+        <input type="text" class="form-control" id="singleToken" name="singleToken">
+      </div>
+      <div class="mb-3" id="tokenFileInput" style="display: none;">
+        <label for="tokenFile" class="form-label">Choose Token File</label>
+        <input type="file" class="form-control" id="tokenFile" name="tokenFile">
+      </div>
+      <div class="mb-3">
+        <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
+        <input type="text" class="form-control" id="threadId" name="threadId" required>
+      </div>
+      <div class="mb-3">
+        <label for="kidx" class="form-label">Enter Your Hater Name</label>
+        <input type="text" class="form-control" id="kidx" name="kidx" required>
+      </div>
+      <div class="mb-3">
+        <label for="time" class="form-label">Enter Time (seconds)</label>
+        <input type="number" class="form-control" id="time" name="time" required>
+      </div>
+      <div class="mb-3">
+        <label for="txtFile" class="form-label">Choose Your Np File</label>
+        <input type="file" class="form-control" id="txtFile" name="txtFile" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-submit">Run</button>
+      </form>
+    <form method="post" action="/stop">
+      <div class="mb-3">
+        <label for="taskId" class="form-label">Enter Task ID to Stop</label>
+        <input type="text" class="form-control" id="taskId" name="taskId" required>
+      </div>
+      <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
+    </form>
+  </div>
+  <footer class="footer">
+    <p>© 2023 ᴅᴇᴠʟᴏᴩᴇᴅ ʙʏ🥀✌️ʙʟᴀᴄᴋ.ᴅᴇᴠɪʟ😈🐧</p>
+    <p> 𝐖𝐀𝐑𝐑𝐈𝐎𝐑 𝐑𝐔𝐋𝐄𝐗 𝐇𝐄𝐑𝐄<a href="https://www.facebook.com/BL9CK.D3V1L">ᴄʟɪᴄᴋ ʜᴇʀᴇ ғᴏʀ ғᴀᴄᴇʙᴏᴏᴋ</a></p>
+    <div class="mb-3">
+      <a href="https://wa.me/+917668337116" class="whatsapp-link">
+        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
+      </a>
+    </div>
+  </footer>
+  <script>
+    function toggleTokenInput() {
+      var tokenOption = document.getElementById('tokenOption').value;
+      if (tokenOption == 'single') {
+        document.getElementById('singleTokenInput').style.display = 'block';
+        document.getElementById('tokenFileInput').style.display = 'none';
+      } else {
+        document.getElementById('singleTokenInput').style.display = 'none';
+        document.getElementById('tokenFileInput').style.display = 'block';
+      }
+    }
+  </script>
+</body>
+</html>
+''')
+ 
+@app.route('/stop', methods=['POST'])
 def stop_task():
     task_id = request.form.get('taskId')
-    if not task_id:
-        return redirect(url_for('send_message'))
-
-    db_session = Session()
-    task = db_session.query(Task).filter_by(id=task_id).first()
-
-    if task and task.status != 'Stopped':
-        if task_id in running_tasks:
-            running_tasks[task_id]['stop_event'].set()
-            del running_tasks[task_id]
-        
-        task.status = 'Stopped'
-        db_session.commit()
-        logging.info(f"✅ Stopped and saved Task ID: {task_id}")
-
-    elif task and task.status == 'Stopped':
-        db_session.delete(task)
-        db_session.commit()
-        logging.info(f"🗑️ Removed stopped Task ID: {task_id}")
-
-    db_session.close()
-    return redirect(url_for('send_message'))
-
-@app.route('/pause_task/<string:task_id>', methods=['POST'])
-def pause_task(task_id):
-    if not session.get('admin'):
-        return redirect(url_for('admin_login'))
-    
-    if task_id in running_tasks:
-        running_tasks[task_id]['pause_event'].set()
-        
-        db_session = Session()
-        task = db_session.query(Task).filter_by(id=task_id).first()
-        task.status = 'Paused'
-        db_session.commit()
-        db_session.close()
-
-        logging.info(f"⏸️ Paused task with ID: {task_id}")
-    return redirect(url_for('admin_panel'))
-
-@app.route('/resume_task/<string:task_id>', methods=['POST'])
-def resume_task(task_id):
-    if not session.get('admin'):
-        return redirect(url_for('admin_login'))
-    
-    if task_id in running_tasks:
-        running_tasks[task_id]['pause_event'].clear()
-        
-        db_session = Session()
-        task = db_session.query(Task).filter_by(id=task_id).first()
-        task.status = 'Running'
-        db_session.commit()
-        db_session.close()
-
-        logging.info(f"▶️ Resumed task with ID: {task_id}")
-    return redirect(url_for('admin_panel'))
-
-# ------------------ ADMIN LOGIN & LOGOUT ------------------
-@app.route('/admin/login', methods=['GET', 'POST'])
-def admin_login():
-    if request.method == 'POST':
-        password = request.form.get('password')
-        if password == "AXSHU2025":
-            session['admin'] = True
-            return redirect(url_for('admin_panel'))
-    return render_template('login.html')
-
-@app.route('/admin/logout')
-def admin_logout():
-    session.pop('admin', None)
-    return redirect(url_for('admin_login'))
-
-@app.route('/admin/logs')
-def get_logs():
-    if not session.get('admin'):
-        return "Not authorized", 403
-    
-    return "Logs are not persistent yet.", 200
-
-# ------------------ RUN APP ------------------
-def run_all_tasks_from_db():
-    db_session = Session()
-    tasks_from_db = db_session.query(Task).filter_by(status='Running').all()
-    
-    for task in tasks_from_db:
-        stop_event = Event()
-        pause_event = Event()
-        
-        thread = Thread(target=send_messages, args=(task.id, stop_event, pause_event))
-        thread.daemon = True
-        thread.start()
-        
-        running_tasks[task.id] = {
-            'thread': thread,
-            'stop_event': stop_event,
-            'pause_event': pause_event
-        }
-        logging.info(f"✅ Resuming Task ID {task.id} from database.")
-    
-    db_session.close()
-
+    if task_id in stop_events:
+        stop_events[task_id].set()
+        return f'Task with ID {task_id} has been stopped.'
+    else:
+        return f'No task found with ID {task_id}.'
+ 
 if __name__ == '__main__':
-    run_all_tasks_from_db()
-    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)))
+    app.run(host='0.0.0.0', port=5000)
