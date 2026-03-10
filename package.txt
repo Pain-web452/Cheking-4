@@ -1,0 +1,8 @@
+chromium
+chromium-chromedriver
+xvfb
+python3-pip
+python3-venv
+wget
+curl
+unzip
